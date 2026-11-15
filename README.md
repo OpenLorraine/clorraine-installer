@@ -82,6 +82,30 @@ Without `--repository-url`, the URL in `config/config.xml` is used with
 `{platform}` replaced. Point it at a stable vanity URL or CDN so moving the
 physical storage later does not invalidate installers.
 
+### Build in Docker
+
+The QtIFW tools need the Qt X11 libraries even when they run without a
+display. A small Linux image contains them, so your machine does not need the
+packages:
+
+```sh
+docker/run.sh python3 -m unittest discover -s tools/tests -t . -v
+docker/run.sh tools/smoke-online-install.sh
+docker/run.sh tools/demo-online-install.sh
+```
+
+The repository is mounted at `/work`, and the container runs as your user, so
+build outputs stay owned by you. The image is built on first use; `make image`
+rebuilds it. `make test`, `make smoke`, and `make demo` are shortcuts.
+
+The demo forwards the host X socket. If the window cannot connect, allow local
+X clients for the session with `xhost +local:` and revoke it afterwards with
+`xhost -local:`.
+
+The image builds Linux installers only; macOS and Windows installers must be
+built on their own platforms. The QtIFW Linux tools are x86-64 builds, so ARM
+hosts need `DOCKER_DEFAULT_PLATFORM=linux/amd64` and emulation.
+
 ## Publishing the repository
 
 Copy the contents of `build/repository/` to the configured URL. Qt Installer

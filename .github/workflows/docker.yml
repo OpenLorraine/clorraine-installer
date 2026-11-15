@@ -1,0 +1,32 @@
+name: docker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    paths:
+      - "docker/**"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the build image
+        run: docker build -t clorraine-installer-builder docker
+
+      - name: Run the unit tests in the image
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            clorraine-installer-builder \
+            python3 -m unittest discover -s tools/tests -t . -v
