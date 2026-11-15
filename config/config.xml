@@ -21,8 +21,8 @@
     <TargetDir>@HomeDir@/Clorraine</TargetDir>
     <StartMenuDir>Clorraine</StartMenuDir>
     <MaintenanceToolName>ClorraineMaintenanceTool</MaintenanceToolName>
-    <WizardDefaultWidth>800</WizardDefaultWidth>
-    <WizardDefaultHeight>600</WizardDefaultHeight>
+    <WizardDefaultWidth>640</WizardDefaultWidth>
+    <WizardDefaultHeight>480</WizardDefaultHeight>
     <RemoteRepositories>
         <Repository>
             <Url>https://openlorraine.github.io/clorraine-installer/repository/{platform}/</Url>
