@@ -213,6 +213,7 @@ def stage_project(
     release_date: str,
     payload_dir: Path,
     repository_url: str,
+    target_dir: str | None = None,
     system: str | None = None,
 ) -> Path:
     """Copy metadata and payload into ``staging_dir`` and stamp release values.
@@ -220,6 +221,7 @@ def stage_project(
     The installer version in ``config/config.xml`` is left untouched; it
     identifies the installer build and is independent of the compiler version.
     The component version in ``package.xml`` is set to ``component_version``.
+    ``target_dir`` replaces the default installation directory when provided.
     Returns the staging directory. The source project is never modified.
     """
     binaries = verify_payload(payload_dir, system)
@@ -232,11 +234,14 @@ def stage_project(
     package_xml = staging_dir / "packages" / CORE_COMPONENT / "meta" / "package.xml"
     set_xml_text(package_xml, ".//Version", component_version)
     set_xml_text(package_xml, ".//ReleaseDate", release_date)
+    config_xml = staging_dir / "config" / "config.xml"
     set_xml_text(
-        staging_dir / "config" / "config.xml",
+        config_xml,
         "./RemoteRepositories/Repository/Url",
         repository_url,
     )
+    if target_dir is not None:
+        set_xml_text(config_xml, ".//TargetDir", target_dir)
 
     bin_dir = staging_dir / "packages" / CORE_COMPONENT / "data" / "bin"
     bin_dir.mkdir(parents=True)
@@ -348,6 +353,10 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="repository directory; defaults to build/repository",
     )
     parser.add_argument(
+        "--target-dir",
+        help="default installation directory; overrides the configured value",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="installer path; defaults to build/out/<platform name>",
@@ -389,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
             arguments.release_date,
             payload,
             repository_url,
+            target_dir=arguments.target_dir,
         )
 
         repository_output = arguments.repository_output or (

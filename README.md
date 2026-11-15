@@ -112,6 +112,16 @@ The smoke test builds a stub repository, serves it on a local port, builds an
 installer against that URL, installs unattended, runs the installed compiler,
 and purges the installation.
 
+### Try the wizard locally
+
+```sh
+QTIFW_DIR=/path/to/QtInstallerFramework tools/demo-online-install.sh
+```
+
+This builds stub tools, serves a local repository, and opens the real wizard.
+The installed stubs only answer `--version`; they are not a compiler. The demo
+installs under `build/demo/install`.
+
 ## Layout
 
 | Path | Purpose |

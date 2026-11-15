@@ -23,6 +23,7 @@ def create_project(
     (project / "config" / "config.xml").write_text(
         "<Installer>"
         f"<Version>{config_version}</Version>"
+        "<TargetDir>@HomeDir@/Clorraine</TargetDir>"
         "<RemoteRepositories><Repository>"
         f"<Url>{repository_url}</Url>"
         "</Repository></RemoteRepositories>"
@@ -268,6 +269,33 @@ class StagingTest(unittest.TestCase):
                     config_xml, "./RemoteRepositories/Repository/Url"
                 ),
                 "https://cdn.test/linux-x86_64/",
+            )
+            self.assertEqual(
+                build_installer.read_xml_text(config_xml, ".//TargetDir"),
+                "@HomeDir@/Clorraine",
+            )
+
+    def test_stage_stamps_target_dir_when_given(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = create_project(root)
+            payload = create_payload(root)
+
+            staging = build_installer.stage_project(
+                project,
+                root / "staging",
+                "1.1.2",
+                "2026-11-15",
+                payload,
+                "https://cdn.test/linux-x86_64/",
+                target_dir="/demo/install",
+                system="Linux",
+            )
+
+            config_xml = staging / "config" / "config.xml"
+            self.assertEqual(
+                build_installer.read_xml_text(config_xml, ".//TargetDir"),
+                "/demo/install",
             )
 
     def test_stage_leaves_source_metadata_untouched(self) -> None:
