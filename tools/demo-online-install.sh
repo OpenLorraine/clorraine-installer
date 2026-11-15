@@ -20,6 +20,22 @@ DEMO_ROOT="$ROOT/build/demo"
 PAYLOAD="$DEMO_ROOT/payload"
 SERVER_PID=""
 
+# The Qt platform plugin needs the X11 runtime libraries. Without them the
+# installer exits in the dynamic loader with a message that does not mention
+# Clorraine, so check before building.
+if ! ldconfig -p 2>/dev/null | grep -q 'libxkbcommon-x11\.so\.0'; then
+    cat >&2 <<'EOF'
+The Qt GUI needs the X11 runtime libraries, which are not installed.
+On Debian or Ubuntu, run:
+
+  sudo apt-get install -y \
+    libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+    libxcb-render-util0 libxcb-xkb1 libxcb-shape0 libxcb-randr0 \
+    libxcb-xfixes0 libxcb-sync1 libxcb-shm0 libxcb-glx0 libxcb-xinerama0
+EOF
+    exit 1
+fi
+
 cleanup() {
     if [ -n "$SERVER_PID" ]; then
         kill "$SERVER_PID" 2>/dev/null || true

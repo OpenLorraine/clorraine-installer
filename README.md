@@ -122,6 +122,18 @@ This builds stub tools, serves a local repository, and opens the real wizard.
 The installed stubs only answer `--version`; they are not a compiler. The demo
 installs under `build/demo/install`.
 
+On Linux, the Qt GUI needs the X11 runtime libraries. On Debian or Ubuntu:
+
+```sh
+sudo apt-get install -y \
+  libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+  libxcb-render-util0 libxcb-xkb1 libxcb-shape0 libxcb-randr0 \
+  libxcb-xfixes0 libxcb-sync1 libxcb-shm0 libxcb-glx0 libxcb-xinerama0
+```
+
+These are runtime dependencies of every Linux installer built with Qt
+Installer Framework, not only of the demo.
+
 ## Layout
 
 | Path | Purpose |
