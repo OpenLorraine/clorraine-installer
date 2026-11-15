@@ -50,7 +50,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
+            libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1 \
+            libxcb-shape0 libxcb-randr0 libxcb-xfixes0 libxcb-sync1 \
+            libxcb-shm0 libxcb-glx0 libxcb-xinerama0
+
+      - name: Check QtIFW libraries
+        run: |
+          if ldd "$QTIFW_DIR/bin/binarycreator" | grep -q "not found"; then
+            ldd "$QTIFW_DIR/bin/binarycreator" | grep "not found"
+            exit 1
+          fi
 
       - name: Smoke test the online install
         run: tools/smoke-online-install.sh
