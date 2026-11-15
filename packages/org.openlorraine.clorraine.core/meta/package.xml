@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Core Clorraine component: the compiler, the build/run driver, and the
+    language server.
+
+    The build tool replaces <Version> and <ReleaseDate> in a staging copy.
+    The committed values are development placeholders.
+-->
+<Package>
+    <DisplayName>Clorraine compiler and tools</DisplayName>
+    <Description>Compiles Clorraine sources to C99, builds and runs host programs, and provides the Clorraine language server. Amiga builds and emulation need additional components.</Description>
+    <Version>0.0.0-dev</Version>
+    <ReleaseDate>1970-01-01</ReleaseDate>
+    <ForcedInstallation>true</ForcedInstallation>
+    <Script>installscript.qs</Script>
+    <Licenses>
+        <License name="Apache License 2.0" file="LICENSE.txt"/>
+    </Licenses>
+</Package>

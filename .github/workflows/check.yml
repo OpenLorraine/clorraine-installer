@@ -1,0 +1,30 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate installer metadata
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --noout config/config.xml packages/*/meta/package.xml
+
+      - name: Test the build tool
+        run: |
+          python -m py_compile tools/build_installer.py
+          python -m unittest discover -s tools/tests -t . -v
