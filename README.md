@@ -3,16 +3,34 @@
 Cross-platform installer for [Clorraine](https://github.com/OpenLorraine/clorraine),
 built with the [Qt Installer Framework](https://doc.qt.io/qtinstallerframework/).
 
-The same installer project provides a graphical setup wizard and an unattended
-command-line mode. It installs the Clorraine compiler, driver, and language
-server, verifies that the installed compiler runs, and keeps a maintenance tool
-for later updates and uninstallation.
+The installer provides a graphical setup wizard and an unattended command-line
+mode. It is a thin online installer: it embeds no component payload and
+downloads the selected components from a Qt Installer Framework repository.
+The installed maintenance tool adds, updates, and removes components.
 
 ## Status
 
-**Scaffold.** The project builds an offline installer for the core component.
-The Amiga SDK component, the online component repository, PATH integration, and
-editor extension packaging are not implemented yet.
+**Online channel scaffold.** The project builds a per-platform component
+repository and a thin installer. The Amiga SDK component, editor extension,
+and publishing workflow are not implemented yet.
+
+## How it works
+
+| Piece | Responsibility |
+|---|---|
+| Repository | Single source of truth; built with `repogen` and copied to any HTTPS host |
+| Installer | Built with `binarycreator -n`; contains the repository URL and downloads everything |
+| Maintenance tool | Installed with the product; updates and removes components |
+
+Repositories are **per platform**, because component payloads are platform
+specific. The configured URL contains a `{platform}` placeholder that the
+build tool replaces with the build host's `<os>-<arch>` slug, for example
+`linux-x86_64`.
+
+The installer version in `config/config.xml` identifies the installer build.
+The component version comes from `--version` and identifies the Clorraine
+release. They are independent: the stable channel always installs the latest
+components.
 
 ## Components
 
@@ -30,40 +48,54 @@ not bundle a host C toolchain.
 
 Requirements:
 
-- Qt Installer Framework 4.x, which provides `binarycreator`.
+- Qt Installer Framework 4.x, which provides `binarycreator` and `repogen`.
 - Python 3.9 or newer for the build tool.
-- A payload directory containing the release binaries built for the host
-  platform.
+- A payload directory containing the release binaries for the build host.
 
 ```sh
 python3 tools/build_installer.py \
     --version 1.1.2 \
-    --payload ../clorraine/build/release/v1.1.2/linux-x86_64 \
-    --output build/out/clorraine-1.1.2-linux-x86_64.run
+    --payload ../clorraine/build/release/v1.1.2/linux-x86_64
 ```
 
-Pass `--qtifw /path/to/QtInstallerFramework` when `binarycreator` is not on
-`PATH`.
+This writes:
 
-The build tool verifies `SHA256SUMS` when the payload contains it, copies the
-payload into `build/staging/`, stamps the version into a staging copy of the
-metadata, and invokes QtIFW. The input contract is documented in
-[docs/release-artifacts.md](docs/release-artifacts.md).
-
-QtIFW builds one platform at a time. Produce the Linux, macOS, and Windows
-installers on their respective systems, or in a release workflow that runs the
-same command on each platform.
-
-## Layout
-
-| Path | Purpose |
+| Output | Default location |
 |---|---|
-| `config/config.xml` | Installer identity, target directory, maintenance tool |
-| `packages/<component>/meta/` | Component metadata, install script, licence text |
-| `packages/<component>/data/` | Payload assembled by the build tool (not committed) |
-| `tools/build_installer.py` | Payload verification, staging, and QtIFW invocation |
-| `tools/tests/` | Unit tests for the build tool |
-| `docs/release-artifacts.md` | Release binary input contract |
+| Component repository | `build/repository/` |
+| Thin online installer | `build/out/clorraine-installer-1.0.0-<platform>` |
+
+Pass `--qtifw /path/to/QtInstallerFramework` when the tools are not on `PATH`.
+
+### Choosing the download location
+
+The URL is baked into the installer and can be changed per build:
+
+```sh
+python3 tools/build_installer.py \
+    --version 1.1.2 \
+    --payload DIR \
+    --repository-url https://cdn.example.com/clorraine/linux-x86_64/
+```
+
+Without `--repository-url`, the URL in `config/config.xml` is used with
+`{platform}` replaced. Point it at a stable vanity URL or CDN so moving the
+physical storage later does not invalidate installers.
+
+## Publishing the repository
+
+Copy the contents of `build/repository/` to the configured URL. Qt Installer
+Framework resolves archives relative to `Updates.xml`, so the repository is
+relocatable.
+
+On object storage, upload component directories first and `Updates.xml` last.
+Otherwise clients can see metadata that points at archives that are not
+uploaded yet. Atomic deployments, such as a GitHub Pages artifact, avoid this
+ordering problem.
+
+Use HTTPS. Qt Installer Framework has no documented repository signing; it
+verifies archive hashes from `Updates.xml`, which catches corruption but not a
+compromised host. Sign the installer binaries separately for Windows and macOS.
 
 ## Checks
 
@@ -71,7 +103,26 @@ same command on each platform.
 xmllint --noout config/config.xml packages/*/meta/package.xml
 python3 -m py_compile tools/build_installer.py
 python3 -m unittest discover -s tools/tests -t . -v
+
+# End-to-end online install; needs QtIFW and curl.
+QTIFW_DIR=/path/to/QtInstallerFramework tools/smoke-online-install.sh
 ```
+
+The smoke test builds a stub repository, serves it on a local port, builds an
+installer against that URL, installs unattended, runs the installed compiler,
+and purges the installation.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `config/config.xml` | Installer identity, target directory, repository URL |
+| `packages/<component>/meta/` | Component metadata, install script, licence text |
+| `packages/<component>/data/` | Payload assembled by the build tool (not committed) |
+| `tools/build_installer.py` | Verification, staging, `repogen`, and `binarycreator` |
+| `tools/smoke-online-install.sh` | Local end-to-end online install check |
+| `tools/tests/` | Unit tests for the build tool |
+| `docs/release-artifacts.md` | Release binary input contract |
 
 ## Licensing
 

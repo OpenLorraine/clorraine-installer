@@ -25,12 +25,28 @@ The current Linux release tarball predates this contract and ships only `clc`
 and `clorraine`. The compiler repository's release job must include
 `clorraine-lsp` before the installer can consume that artifact.
 
-## Version and date
+## Versions
 
-`--version` stamps the installer and core component version.
-`--release-date` defaults to the build date. The versions committed in
-`config/config.xml` and `packages/*/meta/package.xml` are placeholders; the
-build tool rewrites them only in the staging copy.
+| Value | Source | Meaning |
+|---|---|---|
+| Component version | `--version` | Clorraine release installed from the repository |
+| Component release date | `--release-date` (default: build date) | Metadata for the component |
+| Installer version | `config/config.xml` | Installer build; independent of the compiler |
+
+The build tool rewrites the component values only in the staging copy. The
+source project is never modified.
+
+## Repository location
+
+The repository URL is baked into the installer at build time:
+
+- `--repository-url URL` uses the exact URL and skips placeholder substitution.
+- Otherwise the `<Url>` in `config/config.xml` is used with `{platform}`
+  replaced by the build host's `<os>-<arch>` slug.
+
+Repositories are per platform because the component payloads are platform
+specific. `build/repository/` is relocatable: `Updates.xml` references
+archives relative to itself.
 
 ## Release pipeline responsibility
 
@@ -38,11 +54,9 @@ The pipeline that downloads a release archive must verify the published
 SHA-256 digest before extracting it. The build tool then verifies the extracted
 payload when it includes its own `SHA256SUMS`.
 
-## Future online components
+## Publishing
 
-The first builds are offline installers that embed the selected payload. Once a
-published Qt Installer Framework repository exists, the same component
-metadata is reused with `repogen`, and the repository URL is added to
-`config/config.xml`. Installation-time downloads are then verified by Qt
-Installer Framework against the repository metadata rather than by this build
-tool.
+Copy `build/repository/` to the configured URL. On object storage, upload
+component directories before `Updates.xml`. Use HTTPS. Qt Installer Framework
+has no documented repository signing, so host integrity controls and signed
+installer binaries carry the trust.

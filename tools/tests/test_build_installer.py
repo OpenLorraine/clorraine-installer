@@ -10,6 +10,43 @@ from pathlib import Path
 from tools import build_installer
 
 
+def create_project(
+    root: Path,
+    config_version: str = "1.0.0",
+    repository_url: str = "https://example.test/{platform}/",
+) -> Path:
+    """Create a minimal installer project for staging tests."""
+    project = root / "project"
+    meta = project / "packages" / build_installer.CORE_COMPONENT / "meta"
+    meta.mkdir(parents=True)
+    (project / "config").mkdir()
+    (project / "config" / "config.xml").write_text(
+        "<Installer>"
+        f"<Version>{config_version}</Version>"
+        "<RemoteRepositories><Repository>"
+        f"<Url>{repository_url}</Url>"
+        "</Repository></RemoteRepositories>"
+        "</Installer>",
+        encoding="utf-8",
+    )
+    (meta / "package.xml").write_text(
+        "<Package><Version>0.0.0-dev</Version>"
+        "<ReleaseDate>1970-01-01</ReleaseDate></Package>",
+        encoding="utf-8",
+    )
+    return project
+
+
+def create_payload(root: Path, system: str = "Linux") -> Path:
+    """Create a payload directory with the required binaries."""
+    payload = root / "payload"
+    payload.mkdir()
+    for name in build_installer.BINARY_NAMES:
+        filename = build_installer.binary_filename(name, system)
+        (payload / filename).write_text("binary", encoding="utf-8")
+    return payload
+
+
 def write_checksum_entry(directory: Path, name: str) -> str:
     """Create ``name`` in ``directory`` and return its SHA-256 digest."""
     content = f"payload for {name}".encode()
@@ -41,18 +78,18 @@ class PlatformNamingTest(unittest.TestCase):
         self.assertEqual(build_installer.binary_filename("clc", "Linux"), "clc")
         self.assertEqual(build_installer.binary_filename("clc", "Windows"), "clc.exe")
 
-    def test_default_output_name_uses_platform_suffix(self) -> None:
+    def test_default_output_name_uses_installer_version(self) -> None:
         self.assertEqual(
-            build_installer.default_output_name("1.1.2", "Linux", "x86_64"),
-            "clorraine-1.1.2-linux-x86_64.run",
+            build_installer.default_output_name("1.0.0", "Linux", "x86_64"),
+            "clorraine-installer-1.0.0-linux-x86_64.run",
         )
         self.assertEqual(
-            build_installer.default_output_name("1.1.2", "Darwin", "arm64"),
-            "clorraine-1.1.2-macos-aarch64.app",
+            build_installer.default_output_name("1.0.0", "Darwin", "arm64"),
+            "clorraine-installer-1.0.0-macos-aarch64.app",
         )
         self.assertEqual(
-            build_installer.default_output_name("1.1.2", "Windows", "AMD64"),
-            "clorraine-1.1.2-windows-x86_64.exe",
+            build_installer.default_output_name("1.0.0", "Windows", "AMD64"),
+            "clorraine-installer-1.0.0-windows-x86_64.exe",
         )
 
 
@@ -106,27 +143,30 @@ class PayloadTest(unittest.TestCase):
             for name in build_installer.BINARY_NAMES:
                 (payload / f"{name}.exe").write_text("", encoding="utf-8")
             binaries = build_installer.verify_payload(payload, "Windows")
-            self.assertEqual([path.name for path in binaries], [
-                "clc.exe", "clorraine.exe", "clorraine-lsp.exe"
-            ])
+            self.assertEqual(
+                [path.name for path in binaries],
+                ["clc.exe", "clorraine.exe", "clorraine-lsp.exe"],
+            )
 
 
-class XmlStampingTest(unittest.TestCase):
-    """Version stamping must be unambiguous."""
+class XmlTextTest(unittest.TestCase):
+    """Metadata reads and writes must be unambiguous."""
 
     def test_single_element_is_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "metadata.xml"
             path.write_text("<Package><Version>0</Version></Package>", encoding="utf-8")
-            build_installer.set_xml_text(path, "Version", "1.1.2")
-            self.assertIn("<Version>1.1.2</Version>", path.read_text(encoding="utf-8"))
+            build_installer.set_xml_text(path, ".//Version", "1.1.2")
+            self.assertEqual(
+                build_installer.read_xml_text(path, ".//Version"), "1.1.2"
+            )
 
     def test_missing_element_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "metadata.xml"
             path.write_text("<Package></Package>", encoding="utf-8")
             with self.assertRaises(build_installer.BuildError):
-                build_installer.set_xml_text(path, "Version", "1.1.2")
+                build_installer.set_xml_text(path, ".//Version", "1.1.2")
 
     def test_duplicate_element_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -136,7 +176,7 @@ class XmlStampingTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaises(build_installer.BuildError):
-                build_installer.set_xml_text(path, "Version", "1.1.2")
+                build_installer.set_xml_text(path, ".//Version", "1.1.2")
 
     def test_tag_names_inside_comments_are_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -146,33 +186,54 @@ class XmlStampingTest(unittest.TestCase):
                 "<Package><Version>0</Version></Package>",
                 encoding="utf-8",
             )
-            build_installer.set_xml_text(path, "Version", "1.1.2")
-            self.assertIn("<Version>1.1.2</Version>", path.read_text(encoding="utf-8"))
+            build_installer.set_xml_text(path, ".//Version", "1.1.2")
+            self.assertEqual(
+                build_installer.read_xml_text(path, ".//Version"), "1.1.2"
+            )
+
+
+class RepositoryUrlTest(unittest.TestCase):
+    """The repository location is configurable per build."""
+
+    def test_platform_placeholder_is_substituted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = create_project(
+                Path(directory), repository_url="https://cdn.test/{platform}/"
+            )
+            url = build_installer.resolve_repository_url(
+                project / "config" / "config.xml", "linux-x86_64"
+            )
+            self.assertEqual(url, "https://cdn.test/linux-x86_64/")
+
+    def test_override_wins_over_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = create_project(Path(directory))
+            url = build_installer.resolve_repository_url(
+                project / "config" / "config.xml",
+                "linux-x86_64",
+                "http://127.0.0.1:8000/",
+            )
+            self.assertEqual(url, "http://127.0.0.1:8000/")
+
+    def test_url_without_placeholder_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = create_project(
+                Path(directory), repository_url="https://cdn.test/stable/"
+            )
+            url = build_installer.resolve_repository_url(
+                project / "config" / "config.xml", "linux-x86_64"
+            )
+            self.assertEqual(url, "https://cdn.test/stable/")
 
 
 class StagingTest(unittest.TestCase):
-    """Staging copies the payload and stamps a disposable metadata tree."""
+    """Staging copies the payload and stamps disposable metadata."""
 
     def test_stage_copies_payload_and_documents(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            project = root / "project"
-            meta = project / "packages" / build_installer.CORE_COMPONENT / "meta"
-            meta.mkdir(parents=True)
-            (project / "config").mkdir()
-            (project / "config" / "config.xml").write_text(
-                "<Installer><Version>0.0.0-dev</Version></Installer>", encoding="utf-8"
-            )
-            (meta / "package.xml").write_text(
-                "<Package><Version>0.0.0-dev</Version>"
-                "<ReleaseDate>1970-01-01</ReleaseDate></Package>",
-                encoding="utf-8",
-            )
-
-            payload = root / "payload"
-            payload.mkdir()
-            for name in build_installer.BINARY_NAMES:
-                (payload / name).write_text("binary", encoding="utf-8")
+            project = create_project(root)
+            payload = create_payload(root)
             (payload / "NOTICE").write_text("notice", encoding="utf-8")
 
             staging = build_installer.stage_project(
@@ -181,6 +242,7 @@ class StagingTest(unittest.TestCase):
                 "1.1.2",
                 "2026-11-15",
                 payload,
+                "https://cdn.test/linux-x86_64/",
                 system="Linux",
             )
 
@@ -189,31 +251,30 @@ class StagingTest(unittest.TestCase):
             self.assertTrue(
                 (core / "data" / "share" / "doc" / "clorraine" / "NOTICE").is_file()
             )
-            config_xml = (staging / "config" / "config.xml").read_text(encoding="utf-8")
-            self.assertIn("<Version>1.1.2</Version>", config_xml)
-            package_xml = (core / "meta" / "package.xml").read_text(encoding="utf-8")
-            self.assertIn("<Version>1.1.2</Version>", package_xml)
-            self.assertIn("<ReleaseDate>2026-11-15</ReleaseDate>", package_xml)
+            package_xml = core / "meta" / "package.xml"
+            self.assertEqual(
+                build_installer.read_xml_text(package_xml, ".//Version"), "1.1.2"
+            )
+            self.assertEqual(
+                build_installer.read_xml_text(package_xml, ".//ReleaseDate"),
+                "2026-11-15",
+            )
+            config_xml = staging / "config" / "config.xml"
+            self.assertEqual(
+                build_installer.read_xml_text(config_xml, ".//Version"), "1.0.0"
+            )
+            self.assertEqual(
+                build_installer.read_xml_text(
+                    config_xml, "./RemoteRepositories/Repository/Url"
+                ),
+                "https://cdn.test/linux-x86_64/",
+            )
 
     def test_stage_leaves_source_metadata_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            project = root / "project"
-            meta = project / "packages" / build_installer.CORE_COMPONENT / "meta"
-            meta.mkdir(parents=True)
-            (project / "config").mkdir()
-            (project / "config" / "config.xml").write_text(
-                "<Installer><Version>0.0.0-dev</Version></Installer>", encoding="utf-8"
-            )
-            (meta / "package.xml").write_text(
-                "<Package><Version>0.0.0-dev</Version>"
-                "<ReleaseDate>1970-01-01</ReleaseDate></Package>",
-                encoding="utf-8",
-            )
-            payload = root / "payload"
-            payload.mkdir()
-            for name in build_installer.BINARY_NAMES:
-                (payload / name).write_text("binary", encoding="utf-8")
+            project = create_project(root)
+            payload = create_payload(root)
 
             build_installer.stage_project(
                 project,
@@ -221,12 +282,19 @@ class StagingTest(unittest.TestCase):
                 "1.1.2",
                 "2026-11-15",
                 payload,
+                "https://cdn.test/linux-x86_64/",
                 system="Linux",
             )
 
-            self.assertIn(
-                "<Version>0.0.0-dev</Version>",
-                (project / "config" / "config.xml").read_text(encoding="utf-8"),
+            config_xml = project / "config" / "config.xml"
+            self.assertEqual(
+                build_installer.read_xml_text(config_xml, ".//Version"), "1.0.0"
+            )
+            self.assertEqual(
+                build_installer.read_xml_text(
+                    config_xml, "./RemoteRepositories/Repository/Url"
+                ),
+                "https://example.test/{platform}/",
             )
 
 

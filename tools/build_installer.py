@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Assemble a Clorraine installer from release binaries.
+"""Build the Clorraine online installer and its component repository.
 
-This tool owns the packaging step only. It verifies the payload, copies it into
-a staging tree, stamps the release version into the Qt Installer Framework
-metadata, and invokes ``binarycreator``. Downloading the payload belongs to the
-release pipeline; component downloads at installation time belong to a Qt
-Installer Framework repository.
+The repository is the single source of truth for installable components. This
+tool stages the release payload, verifies it, builds the Qt Installer Framework
+repository with ``repogen``, and builds a thin online installer with
+``binarycreator -n``. The installer embeds no payload; it downloads the
+components from the repository URL stamped into its configuration.
+
+The URL is configurable so the same build can target GitHub Pages, an external
+bucket, or a local test server. The source configuration uses a ``{platform}``
+placeholder because Qt Installer Framework repositories are per platform.
 
 Usage::
 
     python3 tools/build_installer.py --version 1.1.2 --payload DIR
+
+    python3 tools/build_installer.py --version 1.1.2 --payload DIR \\
+        --repository-url https://cdn.example.com/clorraine/linux-x86_64/
 """
 
 from __future__ import annotations
@@ -26,6 +33,11 @@ from pathlib import Path
 
 CORE_COMPONENT = "org.openlorraine.clorraine.core"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: Replaced with the build host's ``<os>-<arch>`` slug when the repository URL
+#: is resolved. Kept literal in ``config/config.xml`` so every platform shares
+#: one configuration file.
+PLATFORM_PLACEHOLDER = "{platform}"
 
 #: Executable base names shipped by the core component. The platform suffix is
 #: added by :func:`binary_filename`.
@@ -83,12 +95,12 @@ def binary_filename(name: str, system: str | None = None) -> str:
 
 
 def default_output_name(
-    version: str, system: str | None = None, machine: str | None = None
+    installer_version: str, system: str | None = None, machine: str | None = None
 ) -> str:
     """Return the conventional installer file name for the build host."""
     os_slug = normalize_os(system or platform.system())
     suffix = {"linux": ".run", "macos": ".app", "windows": ".exe"}[os_slug]
-    return f"clorraine-{version}-{platform_slug(system, machine)}{suffix}"
+    return f"clorraine-installer-{installer_version}-{platform_slug(system, machine)}{suffix}"
 
 
 def verify_checksums(payload_dir: Path) -> int:
@@ -146,35 +158,68 @@ def verify_payload(payload_dir: Path, system: str | None = None) -> list[Path]:
     return binaries
 
 
-def set_xml_text(path: Path, tag: str, value: str) -> None:
-    """Replace the single ``<tag>`` element in an XML file with ``value``.
+def read_xml_text(path: Path, element_path: str) -> str:
+    """Return the text of the single element at ``element_path``."""
+    tree = ET.parse(path)
+    matches = tree.getroot().findall(element_path)
+    if len(matches) != 1:
+        raise BuildError(
+            f"{path}: expected exactly one {element_path} element, "
+            f"found {len(matches)}"
+        )
+    return (matches[0].text or "").strip()
+
+
+def set_xml_text(path: Path, element_path: str, value: str) -> None:
+    """Replace the single element at ``element_path`` with ``value``.
 
     Parsing, rather than text matching, keeps tag names inside comments from
     being mistaken for the real element. Raises :class:`BuildError` when the
     element is missing or ambiguous, so a metadata change cannot silently stop
-    the version stamping.
+    the value from being applied.
     """
     tree = ET.parse(path)
-    matches = tree.getroot().findall(f".//{tag}")
+    matches = tree.getroot().findall(element_path)
     if len(matches) != 1:
         raise BuildError(
-            f"{path}: expected exactly one <{tag}> element, found {len(matches)}"
+            f"{path}: expected exactly one {element_path} element, "
+            f"found {len(matches)}"
         )
 
     matches[0].text = value
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
+def resolve_repository_url(
+    config_path: Path, platform_name: str, override: str | None = None
+) -> str:
+    """Return the repository URL for ``platform_name``.
+
+    An explicit ``override`` wins. Otherwise the configured URL is used with
+    :data:`PLATFORM_PLACEHOLDER` replaced, so one configuration covers every
+    platform. A configured URL without the placeholder is used unchanged.
+    """
+    if override:
+        return override
+
+    template = read_xml_text(config_path, "./RemoteRepositories/Repository/Url")
+    return template.replace(PLATFORM_PLACEHOLDER, platform_name)
+
+
 def stage_project(
     project_root: Path,
     staging_dir: Path,
-    version: str,
+    component_version: str,
     release_date: str,
     payload_dir: Path,
+    repository_url: str,
     system: str | None = None,
 ) -> Path:
-    """Copy metadata and payload into ``staging_dir`` and stamp the version.
+    """Copy metadata and payload into ``staging_dir`` and stamp release values.
 
+    The installer version in ``config/config.xml`` is left untouched; it
+    identifies the installer build and is independent of the compiler version.
+    The component version in ``package.xml`` is set to ``component_version``.
     Returns the staging directory. The source project is never modified.
     """
     binaries = verify_payload(payload_dir, system)
@@ -184,16 +229,13 @@ def stage_project(
     shutil.copytree(project_root / "config", staging_dir / "config")
     shutil.copytree(project_root / "packages", staging_dir / "packages")
 
-    set_xml_text(staging_dir / "config" / "config.xml", "Version", version)
+    package_xml = staging_dir / "packages" / CORE_COMPONENT / "meta" / "package.xml"
+    set_xml_text(package_xml, ".//Version", component_version)
+    set_xml_text(package_xml, ".//ReleaseDate", release_date)
     set_xml_text(
-        staging_dir / "packages" / CORE_COMPONENT / "meta" / "package.xml",
-        "Version",
-        version,
-    )
-    set_xml_text(
-        staging_dir / "packages" / CORE_COMPONENT / "meta" / "package.xml",
-        "ReleaseDate",
-        release_date,
+        staging_dir / "config" / "config.xml",
+        "./RemoteRepositories/Repository/Url",
+        repository_url,
     )
 
     bin_dir = staging_dir / "packages" / CORE_COMPONENT / "data" / "bin"
@@ -219,16 +261,14 @@ def stage_project(
     return staging_dir
 
 
-def find_binarycreator(qtifw_dir: Path | None = None) -> Path:
-    """Locate ``binarycreator`` from an explicit QtIFW root or ``PATH``."""
-    executable = (
-        "binarycreator.exe" if platform.system() == "Windows" else "binarycreator"
-    )
+def find_tool(name: str, qtifw_dir: Path | None = None) -> Path:
+    """Locate a QtIFW tool from an explicit QtIFW root or ``PATH``."""
+    executable = name + (".exe" if platform.system() == "Windows" else "")
     candidates: list[Path] = []
     if qtifw_dir is not None:
         candidates.extend((qtifw_dir / "bin" / executable, qtifw_dir / executable))
 
-    on_path = shutil.which("binarycreator")
+    on_path = shutil.which(name)
     if on_path:
         candidates.append(Path(on_path))
 
@@ -237,19 +277,40 @@ def find_binarycreator(qtifw_dir: Path | None = None) -> Path:
             return candidate
 
     raise BuildError(
-        "binarycreator was not found; install Qt Installer Framework 4.x "
+        f"{name} was not found; install Qt Installer Framework 4.x "
         "or pass --qtifw <QtInstallerFramework root>"
     )
+
+
+def build_repository(staging_dir: Path, repository_dir: Path, repogen: Path) -> None:
+    """Build the online repository from the staged packages."""
+    if repository_dir.exists():
+        shutil.rmtree(repository_dir)
+
+    command = [
+        str(repogen),
+        "-p",
+        str(staging_dir / "packages"),
+        str(repository_dir),
+    ]
+    print("+ " + " ".join(command))
+    completed = subprocess.run(command, check=False)
+    if completed.returncode != 0:
+        raise BuildError(f"repogen failed with exit status {completed.returncode}")
 
 
 def run_binarycreator(
     binarycreator: Path, staging_dir: Path, output: Path
 ) -> None:
-    """Invoke QtIFW to build the offline installer at ``output``."""
+    """Build the thin online installer at ``output``.
+
+    ``-n`` keeps every component out of the installer binary, so installation
+    always downloads the component metadata and payload from the repository.
+    """
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [
         str(binarycreator),
-        "--offline-only",
+        "-n",
         "-c",
         str(staging_dir / "config" / "config.xml"),
         "-p",
@@ -267,7 +328,7 @@ def run_binarycreator(
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse the command line for :func:`main`."""
     parser = argparse.ArgumentParser(
-        description="Build a Clorraine installer from a release payload."
+        description="Build the Clorraine online installer and repository."
     )
     parser.add_argument("--version", required=True, help="Clorraine release version")
     parser.add_argument(
@@ -277,6 +338,16 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="directory containing clc, clorraine, and clorraine-lsp",
     )
     parser.add_argument(
+        "--repository-url",
+        help="repository URL baked into the installer; overrides the configured "
+        "URL and skips {platform} substitution",
+    )
+    parser.add_argument(
+        "--repository-output",
+        type=Path,
+        help="repository directory; defaults to build/repository",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="installer path; defaults to build/out/<platform name>",
@@ -284,7 +355,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--qtifw",
         type=Path,
-        help="Qt Installer Framework root when binarycreator is not on PATH",
+        help="Qt Installer Framework root when its tools are not on PATH",
     )
     parser.add_argument(
         "--release-date",
@@ -295,12 +366,20 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build the installer and report success or a build error."""
+    """Build the repository and installer, reporting build errors."""
     arguments = parse_arguments(argv)
     try:
-        verified = verify_checksums(arguments.payload.resolve())
+        payload = arguments.payload.resolve()
+        verified = verify_checksums(payload)
         if verified:
             print(f"verified {verified} file(s) with SHA256SUMS")
+
+        platform_name = platform_slug()
+        repository_url = resolve_repository_url(
+            PROJECT_ROOT / "config" / "config.xml",
+            platform_name,
+            arguments.repository_url,
+        )
 
         staging_dir = PROJECT_ROOT / "build" / "staging"
         stage_project(
@@ -308,25 +387,41 @@ def main(argv: list[str] | None = None) -> int:
             staging_dir,
             arguments.version,
             arguments.release_date,
-            arguments.payload.resolve(),
+            payload,
+            repository_url,
         )
 
+        repository_output = arguments.repository_output or (
+            PROJECT_ROOT / "build" / "repository"
+        )
+        build_repository(
+            staging_dir,
+            repository_output.resolve(),
+            find_tool("repogen", arguments.qtifw),
+        )
+
+        installer_version = read_xml_text(
+            staging_dir / "config" / "config.xml", ".//Version"
+        )
         output = arguments.output
         if output is None:
             output = (
                 PROJECT_ROOT
                 / "build"
                 / "out"
-                / default_output_name(arguments.version)
+                / default_output_name(installer_version)
             )
         output = output.resolve()
 
-        binarycreator = find_binarycreator(arguments.qtifw)
-        run_binarycreator(binarycreator, staging_dir, output)
+        run_binarycreator(
+            find_tool("binarycreator", arguments.qtifw), staging_dir, output
+        )
     except BuildError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    print(f"repository: {repository_output.resolve()}")
+    print(f"repository url: {repository_url}")
     print(f"wrote {output}")
     return 0
 

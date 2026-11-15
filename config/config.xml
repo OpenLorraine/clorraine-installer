@@ -2,20 +2,30 @@
 <!--
     Installer identity for every Clorraine installer.
 
-    The build tool replaces <Version> in a staging copy with the Clorraine
-    release version. The committed value is a development placeholder.
+    <Version> identifies the installer build. It is deliberately independent
+    of the compiler version: the online installer always installs the latest
+    compiler components from the stable channel.
 
-    Online component repositories are added here once a published Qt Installer
-    Framework repository exists. The first builds are offline installers that
-    embed the selected payload.
+    The repository URL contains a {platform} placeholder that the build tool
+    replaces with the build host's operating system and architecture slug. Qt
+    Installer Framework repositories are per platform because component
+    payloads are platform specific. Pass the repository URL option to bake in
+    a different location, such as an external bucket or a local test server.
 -->
 <Installer>
     <Name>Clorraine</Name>
-    <Version>0.0.0-dev</Version>
+    <Version>1.0.0</Version>
     <Title>Clorraine</Title>
     <Publisher>OpenLorraine</Publisher>
     <ProductUrl>https://github.com/OpenLorraine/clorraine</ProductUrl>
     <TargetDir>@HomeDir@/Clorraine</TargetDir>
     <StartMenuDir>Clorraine</StartMenuDir>
     <MaintenanceToolName>ClorraineMaintenanceTool</MaintenanceToolName>
+    <RemoteRepositories>
+        <Repository>
+            <Url>https://openlorraine.github.io/clorraine-installer/repository/{platform}/</Url>
+            <Enabled>1</Enabled>
+            <DisplayName>Clorraine stable channel</DisplayName>
+        </Repository>
+    </RemoteRepositories>
 </Installer>

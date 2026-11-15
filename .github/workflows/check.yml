@@ -28,3 +28,29 @@ jobs:
         run: |
           python -m py_compile tools/build_installer.py
           python -m unittest discover -s tools/tests -t . -v
+
+  online-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Qt Installer Framework
+        run: |
+          python -m pip install --quiet aqtinstall
+          python -m aqt install-tool linux desktop tools_ifw -O "$RUNNER_TEMP/qtifw"
+          BINARYCREATOR=$(find "$RUNNER_TEMP/qtifw" -type f -name binarycreator | head -1)
+          echo "QTIFW_DIR=$(dirname "$(dirname "$BINARYCREATOR")")" >> "$GITHUB_ENV"
+
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
+
+      - name: Smoke test the online install
+        run: tools/smoke-online-install.sh
